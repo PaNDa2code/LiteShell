@@ -1,6 +1,8 @@
-[package]
-name = "rust_terminal"
-version = "0.1.0"
-edition = "2021"
+[workspace]
+members = [
+  "circular_buffer",
+  "main_app",
+]
 
-[dependencies]
+[workspace.dependencies]
+windows = { version = "0.59.0", features = ["Win32_System_Memory", "Win32_System_SystemInformation", "Win32_Security"] }
