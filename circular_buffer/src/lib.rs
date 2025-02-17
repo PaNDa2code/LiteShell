@@ -18,7 +18,7 @@ pub struct CircularBuffer {
     size: usize,
     head: usize,
     tail: usize,
-    filled: bool,
+    len: usize,
 }
 
 impl CircularBuffer {
@@ -112,7 +112,7 @@ impl CircularBuffer {
                 size,
                 head: 0,
                 tail: 0,
-                filled: false,
+                len: 0,
             })
         }
     }
@@ -134,17 +134,50 @@ impl CircularBuffer {
 
     #[inline]
     fn is_full(self: &Self) -> bool {
-        self.filled
+        self.len == self.size
     }
 
     #[inline]
     pub fn len(self: &Self) -> usize {
-        if self.filled {
-            self.size
-        } else {
-            self.tail
+        self.len
+    }
+
+    #[inline]
+    unsafe fn inline_write(self: &mut Self, buffer: &[u8]) {
+        let size = self.size;
+        let bytes_to_write = buffer.len().min(size);
+        std::ptr::copy_nonoverlapping(buffer.as_ptr(), self.write_ptr_mut(), bytes_to_write);
+        self.commit_write(bytes_to_write);
+    }
+
+    #[inline]
+    fn commit_write(self: &mut Self, data_len: usize) {
+        let size = self.size;
+
+        self.tail += data_len;
+        self.tail &= size - 1;
+
+        if self.is_full() {
+            self.head = self.tail;
+            return;
+        }
+
+        self.len += data_len;
+        if self.len > size {
+            self.head = self.tail;
+            self.len = size;
         }
     }
+
+    pub fn raw_write(self: &mut Self, buffer: &[u8]) {
+        unsafe { self.inline_write(buffer) };
+    }
+
+    #[inline]
+    unsafe fn write_ptr_mut(self: &Self) -> *mut u8 {
+        self.base.add(self.tail)
+    }
+
 }
 
 impl Drop for CircularBuffer {
@@ -164,23 +197,8 @@ impl Drop for CircularBuffer {
 
 impl std::io::Write for CircularBuffer {
     fn write(self: &mut Self, buffer: &[u8]) -> std::io::Result<usize> {
-        let tail = self.tail;
-        let bytes_to_write = buffer.len().min(self.size);
-
-        unsafe {
-            std::ptr::copy_nonoverlapping(buffer.as_ptr(), self.base.add(tail), bytes_to_write)
-        };
-
-        self.tail += bytes_to_write;
-
-        if self.filled || self.tail >= self.size {
-            self.tail -= self.size;
-            self.filled = true;
-        }
-        if self.filled {
-            self.head = self.tail;
-        }
-        Ok(bytes_to_write)
+        unsafe { self.inline_write(buffer) };
+        Ok(buffer.len())
     }
 
     fn flush(self: &mut Self) -> std::io::Result<()> {
@@ -237,6 +255,8 @@ fn test_ring_buffer_write2() {
     let ring_buffer_slice = ring_buffer.to_slice();
 
     assert_eq!(ring_buffer.size, ring_buffer.len());
-    assert_eq!(test_str, &ring_buffer_slice[ring_buffer.len() - test_str.len()..]);
+    assert_eq!(
+        test_str,
+        &ring_buffer_slice[ring_buffer.len() - test_str.len()..]
+    );
 }
-
