@@ -1,6 +1,6 @@
 [package]
 edition = "2021"
-name = "circular_buffer"
+name = "console_session"
 authors.workspace = true
 version.workspace = true
 

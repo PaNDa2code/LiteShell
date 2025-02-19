@@ -1,8 +1,9 @@
 [package]
-name = "rust_terminal"
+name = "LiteShell"
 version.workspace = true
 authors.workspace = true
 edition = "2021"
 
 [dependencies]
 circular_buffer = { path = "../circular_buffer" }
+console_session = { path = "../console_session" }
