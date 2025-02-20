@@ -21,6 +21,7 @@ dependencies = [
 name = "console_session"
 version = "0.0.0"
 dependencies = [
+ "circular_buffer",
  "windows",
 ]
 

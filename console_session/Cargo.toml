@@ -6,3 +6,5 @@ version.workspace = true
 
 [dependencies]
 windows = { workspace = true }
+
+circular_buffer = { path = "../circular_buffer" }
