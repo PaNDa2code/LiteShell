@@ -47,7 +47,6 @@ pub struct ConsoleSession {
     pub stdout_read_file: File,
     pesudo_console_handle: HPCON,
     process_info: PROCESS_INFORMATION,
-    circular_buffer: CircularBuffer,
 }
 
 impl ConsoleSession {
@@ -93,7 +92,6 @@ impl ConsoleSession {
                 stdout_read_file,
                 pesudo_console_handle,
                 process_info,
-                circular_buffer,
             })
         }
     }
