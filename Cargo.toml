@@ -6,7 +6,7 @@ version = "0.0.0"
 members = [ 
   "console_session",
   "circular_buffer",
-  "main_app",
+  "lite_shell",
 ]
 resolver = "2"
 
