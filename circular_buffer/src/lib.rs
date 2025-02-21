@@ -1,4 +1,3 @@
-use std::{mem::zeroed, ptr::null_mut};
 use windows::Win32::{
     Foundation::{CloseHandle, GetLastError, INVALID_HANDLE_VALUE},
     System::{
@@ -8,24 +7,25 @@ use windows::Win32::{
             MEM_REPLACE_PLACEHOLDER, MEM_RESERVE, MEM_RESERVE_PLACEHOLDER, PAGE_READWRITE,
             VIRTUAL_FREE_TYPE,
         },
-        SystemInformation::GetSystemInfo,
+        SystemInformation::{GetSystemInfo, SYSTEM_INFO},
     },
 };
 
 #[derive(Debug)]
-pub struct CircularBuffer {
-    base: *mut u8,
+pub struct CircularBuffer<'a> {
+    base: &'a mut [u8],
+    doubled: &'a mut [u8],
     size: usize,
     head: usize,
     tail: usize,
     len: usize,
 }
 
-impl CircularBuffer {
+impl<'a> CircularBuffer<'a> {
     pub fn new(min_size: usize) -> windows::core::Result<Self> {
         unsafe {
             let mut size = min_size;
-            let mut sys_info = zeroed();
+            let mut sys_info = SYSTEM_INFO::default();
 
             GetSystemInfo(&mut sys_info);
 
@@ -104,11 +104,15 @@ impl CircularBuffer {
                 return Err(GetLastError().into());
             }
 
-            let slice = std::ptr::slice_from_raw_parts_mut(view1.Value as *mut u8, size);
-            (*slice).fill(0);
+            let base = std::slice::from_raw_parts_mut(view1.Value as *mut u8, size);
+            base.fill(0);
+
+            let doubled = std::slice::from_raw_parts_mut(view1.Value as *mut u8, size);
+            doubled.fill(0);
 
             Ok(Self {
-                base: view1.Value.cast(),
+                base,
+                doubled,
                 size,
                 head: 0,
                 tail: 0,
@@ -119,17 +123,12 @@ impl CircularBuffer {
 
     #[inline]
     pub fn to_slice(self: &Self) -> &[u8] {
-        unsafe { std::slice::from_raw_parts(self.base.add(self.head), self.len()) }
+        &self.base[self.head..self.len()]
     }
 
     #[inline]
-    pub fn to_slice_mut(self: &mut Self) -> &mut [u8] {
-        unsafe { std::slice::from_raw_parts_mut(self.base.add(self.head), self.len()) }
-    }
-
-    #[inline]
-    pub fn to_raw_slice(self: &Self) -> &[u8] {
-        unsafe { std::slice::from_raw_parts(self.base, self.size) }
+    pub fn write_slice(self: &mut Self) -> &mut [u8] {
+        &mut self.doubled[self.tail..]
     }
 
     #[inline]
@@ -142,12 +141,12 @@ impl CircularBuffer {
         self.len
     }
 
-    #[inline]
-    unsafe fn inline_write(self: &mut Self, buffer: &[u8]) {
+    pub fn write(self: &mut Self, buffer: &[u8]) -> usize {
         let size = self.size;
         let bytes_to_write = buffer.len().min(size);
-        std::ptr::copy_nonoverlapping(buffer.as_ptr(), self.write_ptr_mut(), bytes_to_write);
+        self.write_slice().copy_from_slice(&buffer[..bytes_to_write]);
         self.commit_write(bytes_to_write);
+        bytes_to_write
     }
 
     #[inline]
@@ -169,36 +168,35 @@ impl CircularBuffer {
         }
     }
 
-    pub fn raw_write(self: &mut Self, buffer: &[u8]) {
-        unsafe { self.inline_write(buffer) };
-    }
 
-    #[inline]
-    unsafe fn write_ptr_mut(self: &Self) -> *mut u8 {
-        self.base.add(self.tail)
-    }
-
-}
-
-impl Drop for CircularBuffer {
-    fn drop(&mut self) {
-        unsafe {
-            if self.base != null_mut() {
-                _ = UnmapViewOfFile(MEMORY_MAPPED_VIEW_ADDRESS {
-                    Value: self.base.cast(),
-                });
-                _ = UnmapViewOfFile(MEMORY_MAPPED_VIEW_ADDRESS {
-                    Value: self.base.add(self.size).cast(),
-                });
-            }
+    pub fn read_from_file(self: &mut Self, file: &mut std::fs::File) -> std::io::Result<usize> {
+        let write_slice = self.write_slice();
+        match std::io::Read::read(file, write_slice) {
+            Ok(bytes) => {
+                self.commit_write(bytes);
+                Ok(bytes)
+            },
+            Err(e) => Err(e)
         }
     }
 }
 
-impl std::io::Write for CircularBuffer {
+impl<'a> Drop for CircularBuffer<'a> {
+    fn drop(&mut self) {
+        unsafe {
+            _ = UnmapViewOfFile(MEMORY_MAPPED_VIEW_ADDRESS {
+                Value: self.base.as_mut_ptr().cast(),
+            });
+            _ = UnmapViewOfFile(MEMORY_MAPPED_VIEW_ADDRESS {
+                Value: self.base.as_mut_ptr().add(self.size).cast(),
+            });
+        }
+    }
+}
+
+impl<'a> std::io::Write for CircularBuffer<'a> {
     fn write(self: &mut Self, buffer: &[u8]) -> std::io::Result<usize> {
-        unsafe { self.inline_write(buffer) };
-        Ok(buffer.len())
+        Ok(self.write(buffer))
     }
 
     fn flush(self: &mut Self) -> std::io::Result<()> {
@@ -206,16 +204,10 @@ impl std::io::Write for CircularBuffer {
     }
 }
 
-impl std::io::Read for CircularBuffer {
+impl<'a> std::io::Read for CircularBuffer<'a> {
     fn read(self: &mut Self, buf: &mut [u8]) -> std::io::Result<usize> {
-        let bytes_to_read = if self.is_full() {
-            self.size % buf.len()
-        } else {
-            self.tail % buf.len()
-        };
-        unsafe {
-            std::ptr::copy_nonoverlapping(self.base.add(self.head), buf.as_mut_ptr(), bytes_to_read)
-        }
+        let bytes_to_read = self.len().min(buf.len());
+        buf.copy_from_slice(&self.to_slice()[..bytes_to_read]);
         Ok(bytes_to_read)
     }
 }
