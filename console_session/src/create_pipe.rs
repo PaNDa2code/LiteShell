@@ -23,9 +23,7 @@ pub unsafe fn create_pipe(pipe_name: &str) -> Result<(HANDLE, HANDLE)> {
 
     let mut pipe_name_with_null = wstr(&pipe_name_prefixed);
 
-    let pipe_name_pwstr = PWSTR {
-        0: pipe_name_with_null.as_mut_ptr(),
-    };
+    let pipe_name_pwstr = PWSTR(pipe_name_with_null.as_mut_ptr());
 
     let s_attr = SECURITY_ATTRIBUTES {
         nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,

@@ -1,20 +1,11 @@
-use std::{
-    fs::File,
-    os::windows::{ffi::OsStrExt, io::FromRawHandle},
-    str::FromStr,
-};
+use std::{fs::File, os::windows::io::FromRawHandle};
 
-use circular_buffer::CircularBuffer;
 use windows::{
     core::{Result, PCWSTR},
-    Win32::
-        System::{
-            Console::{CreatePseudoConsole, ResizePseudoConsole, COORD, HPCON},
-            Threading::{
-                CreateProcessW, EXTENDED_STARTUPINFO_PRESENT, PROCESS_INFORMATION,
-            },
-        }
-    ,
+    Win32::System::{
+        Console::{CreatePseudoConsole, ResizePseudoConsole, COORD, HPCON},
+        Threading::{CreateProcessW, EXTENDED_STARTUPINFO_PRESENT, PROCESS_INFORMATION},
+    },
 };
 
 mod create_pipe;
@@ -45,24 +36,37 @@ impl ShellApp {
 pub struct ConsoleSession {
     pub stdin_write_file: File,
     pub stdout_read_file: File,
-    pesudo_console_handle: HPCON,
-    process_info: PROCESS_INFORMATION,
+    pub pesudo_console_handle: HPCON,
+    pub process_info: PROCESS_INFORMATION,
+    pub size: ConsoleSize,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ConsoleSize {
+    x: u16,
+    y: u16,
+}
+
+impl From<ConsoleSize> for COORD {
+    fn from(size: ConsoleSize) -> Self {
+        Self {
+            X: size.x as i16,
+            Y: size.y as i16,
+        }
+    }
 }
 
 impl ConsoleSession {
     pub fn new(app_name: &str, app_args: Option<&[&str]>) -> Result<Self> {
         _ = app_args;
         unsafe {
-            let circular_buffer = CircularBuffer::new(64 * 1024)?;
             let (stdout_read_handle, stdout_write_handle) = create_pipe("stdout")?;
             let (stdin_read_handle, stdin_write_handle) = create_pipe("stdin")?;
+            let size = ConsoleSize { x: 600, y: 800 };
+            let cord: COORD = size.into();
 
-            let pesudo_console_handle = CreatePseudoConsole(
-                COORD { X: 600, Y: 700 },
-                stdin_read_handle,
-                stdout_write_handle,
-                0,
-            )?;
+            let pesudo_console_handle =
+                CreatePseudoConsole(cord, stdin_read_handle, stdout_write_handle, 0)?;
 
             let mut process_info = PROCESS_INFORMATION::default();
             let startup_info_ex = create_startup_info(pesudo_console_handle)?;
@@ -92,6 +96,7 @@ impl ConsoleSession {
                 stdout_read_file,
                 pesudo_console_handle,
                 process_info,
+                size,
             })
         }
     }
@@ -100,21 +105,15 @@ impl ConsoleSession {
         Self::new(shell_app.path(), None)
     }
 
-    pub fn resize(self: &mut Self, width: u16, hight: u16) -> Result<()> {
+    pub fn resize<T: Into<u16> + Copy>(self: &mut Self, width: T, hight: T) -> Result<()> {
         unsafe {
-            ResizePseudoConsole(
-                self.pesudo_console_handle,
-                COORD {
-                    X: width as i16,
-                    Y: hight as i16,
-                },
-            )?
+            self.size.x = width.into();
+            self.size.y = hight.into();
+            ResizePseudoConsole(self.pesudo_console_handle, self.size.into())?
         };
         Ok(())
     }
 }
-
-
 
 #[test]
 fn pipe_test() -> Result<()> {
@@ -136,6 +135,6 @@ fn pipe_test() -> Result<()> {
 #[test]
 fn console_session_new_test() -> Result<()> {
     let mut console_session = ConsoleSession::new("C:\\Windows\\System32\\cmd.exe", None)?;
-    console_session.resize(100, 100)?;
+    console_session.resize(100u16, 100u16)?;
     Ok(())
 }
