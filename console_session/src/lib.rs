@@ -1,4 +1,4 @@
-use std::{fs::File, os::windows::io::FromRawHandle};
+use std::{ffi::OsStr, fs::File, os::windows::{ffi::OsStrExt, io::FromRawHandle}};
 
 use windows::{
     core::{Result, PCWSTR},
@@ -13,9 +13,6 @@ use create_pipe::create_pipe;
 
 mod startupinfo;
 use startupinfo::create_startup_info;
-
-mod wstr;
-use wstr::*;
 
 pub enum ShellApp {
     CMD,
@@ -59,24 +56,24 @@ impl From<ConsoleSize> for COORD {
 impl ConsoleSession {
     pub fn new(app_name: &str, app_args: Option<&[&str]>) -> Result<Self> {
         _ = app_args;
+        let (stdout_read_handle, stdout_write_handle) = create_pipe()?;
+        let (stdin_read_handle, stdin_write_handle) = create_pipe()?;
+        let size = ConsoleSize { x: 600, y: 800 };
+        let cord: COORD = size.into();
+
+        let pesudo_console_handle =
+            unsafe { CreatePseudoConsole(cord, stdin_read_handle, stdout_write_handle, 0) }?;
+
+        let mut process_info = PROCESS_INFORMATION::default();
+        let startup_info_ex = create_startup_info(pesudo_console_handle)?;
+
+        let app_name_wide: Vec<u16> = OsStr::new(app_name).encode_wide().chain(Some(0)).collect();
+
+        let app_name_pcwstr = PCWSTR(app_name_wide.as_ptr());
+
         unsafe {
-            let (stdout_read_handle, stdout_write_handle) = create_pipe("stdout")?;
-            let (stdin_read_handle, stdin_write_handle) = create_pipe("stdin")?;
-            let size = ConsoleSize { x: 600, y: 800 };
-            let cord: COORD = size.into();
-
-            let pesudo_console_handle =
-                CreatePseudoConsole(cord, stdin_read_handle, stdout_write_handle, 0)?;
-
-            let mut process_info = PROCESS_INFORMATION::default();
-            let startup_info_ex = create_startup_info(pesudo_console_handle)?;
-
-            let mut app_name_wide = wstr(app_name);
-
-            let lpapplicationname = PCWSTR(app_name_wide.as_mut_ptr());
-
             CreateProcessW(
-                lpapplicationname,
+                app_name_pcwstr,
                 None,
                 None,
                 None,
@@ -86,19 +83,19 @@ impl ConsoleSession {
                 None,
                 &startup_info_ex.StartupInfo,
                 &mut process_info,
-            )?;
+            )
+        }?;
 
-            let stdin_write_file = File::from_raw_handle(stdin_write_handle.0);
-            let stdout_read_file = File::from_raw_handle(stdout_read_handle.0);
+        let stdin_write_file = unsafe { File::from_raw_handle(stdin_write_handle.0) };
+        let stdout_read_file = unsafe { File::from_raw_handle(stdout_read_handle.0) };
 
-            Ok(Self {
-                stdin_write_file,
-                stdout_read_file,
-                pesudo_console_handle,
-                process_info,
-                size,
-            })
-        }
+        Ok(Self {
+            stdin_write_file,
+            stdout_read_file,
+            pesudo_console_handle,
+            process_info,
+            size,
+        })
     }
 
     pub fn new_shell(shell_app: ShellApp) -> Result<Self> {
@@ -106,18 +103,16 @@ impl ConsoleSession {
     }
 
     pub fn resize<T: Into<u16> + Copy>(self: &mut Self, width: T, hight: T) -> Result<()> {
-        unsafe {
-            self.size.x = width.into();
-            self.size.y = hight.into();
-            ResizePseudoConsole(self.pesudo_console_handle, self.size.into())?
-        };
+        self.size.x = width.into();
+        self.size.y = hight.into();
+        unsafe { ResizePseudoConsole(self.pesudo_console_handle, self.size.into()) }?;
         Ok(())
     }
 }
 
 #[test]
 fn pipe_test() -> Result<()> {
-    let (read_handle, write_handle) = unsafe { create_pipe("name") }?;
+    let (read_handle, write_handle) = create_pipe()?;
 
     let mut write_file = unsafe { File::from_raw_handle(write_handle.0) };
     let mut read_file = unsafe { File::from_raw_handle(read_handle.0) };
@@ -134,7 +129,7 @@ fn pipe_test() -> Result<()> {
 
 #[test]
 fn console_session_new_test() -> Result<()> {
-    let mut console_session = ConsoleSession::new("C:\\Windows\\System32\\cmd.exe", None)?;
+    let mut console_session = ConsoleSession::new_shell(ShellApp::CMD)?;
     console_session.resize(100u16, 100u16)?;
     Ok(())
 }

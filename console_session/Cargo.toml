@@ -6,5 +6,6 @@ version.workspace = true
 
 [dependencies]
 windows = { workspace = true }
+rand = { workspace = true }
 
 circular_buffer = { path = "../circular_buffer" }

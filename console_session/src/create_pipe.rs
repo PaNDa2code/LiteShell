@@ -1,7 +1,8 @@
-use std::ptr::null_mut;
+use std::{char, ffi::OsStr, os::windows::ffi::OsStrExt, ptr::null_mut};
 
+use rand::{distr::Alphanumeric, Rng};
 use windows::{
-    core::{Result, PWSTR},
+    core::{Result, PCWSTR, PWSTR},
     Win32::{
         Foundation::{GetLastError, GENERIC_WRITE, HANDLE, TRUE},
         Security::SECURITY_ATTRIBUTES,
@@ -12,18 +13,22 @@ use windows::{
     },
 };
 
-use crate::wstr;
 
-pub unsafe fn create_pipe(pipe_name: &str) -> Result<(HANDLE, HANDLE)> {
-    let pipe_name_prefixed = if pipe_name.starts_with(r"\\.\pipe\") {
-        pipe_name.to_string()
-    } else {
-        format!(r"\\.\pipe\{}", pipe_name)
-    };
+pub fn create_pipe() -> Result<(HANDLE, HANDLE)> {
+    let random_pipe_name: String = rand::rng()
+        .sample_iter(&Alphanumeric)
+        .take(7)
+        .map(|x| (x as char).to_ascii_lowercase())
+        .collect();
 
-    let mut pipe_name_with_null = wstr(&pipe_name_prefixed);
+    let pipe_name_prefixed: String = format!(r"\\.\pipe\{}", random_pipe_name);
 
-    let pipe_name_pwstr = PWSTR(pipe_name_with_null.as_mut_ptr());
+    let pipe_name_prefixed_wide: Vec<u16> = OsStr::new(&pipe_name_prefixed)
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+
+    let pipe_name_pwstr = PCWSTR(pipe_name_prefixed_wide.as_ptr());
 
     let s_attr = SECURITY_ATTRIBUTES {
         nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
@@ -31,30 +36,34 @@ pub unsafe fn create_pipe(pipe_name: &str) -> Result<(HANDLE, HANDLE)> {
         bInheritHandle: TRUE,
     };
 
-    let h_read = CreateNamedPipeW(
-        pipe_name_pwstr,
-        PIPE_ACCESS_INBOUND | FILE_FLAG_OVERLAPPED,
-        PIPE_TYPE_BYTE | PIPE_NOWAIT,
-        1,
-        4096,
-        4096,
-        0,
-        Some(&s_attr),
-    );
+    let h_read = unsafe {
+        CreateNamedPipeW(
+            pipe_name_pwstr,
+            PIPE_ACCESS_INBOUND | FILE_FLAG_OVERLAPPED,
+            PIPE_TYPE_BYTE | PIPE_NOWAIT,
+            1,
+            0,
+            6144,
+            0,
+            Some(&s_attr),
+        )
+    };
 
     if h_read.is_invalid() {
-        return Err(GetLastError().into());
+        return Err(unsafe { GetLastError().into() });
     }
 
-    let h_write = CreateFileW(
-        pipe_name_pwstr,
-        GENERIC_WRITE.0,
-        FILE_SHARE_NONE,
-        Some(&s_attr),
-        OPEN_EXISTING,
-        FILE_FLAG_OVERLAPPED,
-        None,
-    )?;
+    let h_write = unsafe {
+        CreateFileW(
+            pipe_name_pwstr,
+            GENERIC_WRITE.0,
+            FILE_SHARE_NONE,
+            Some(&s_attr),
+            OPEN_EXISTING,
+            FILE_FLAG_OVERLAPPED,
+            None,
+        )
+    }?;
 
     Ok((h_read, h_write))
 }

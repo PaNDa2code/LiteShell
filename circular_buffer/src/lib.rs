@@ -24,14 +24,13 @@ pub struct CircularBuffer<'a> {
 impl<'a> CircularBuffer<'a> {
     pub fn new(min_size: usize) -> windows::core::Result<Self> {
         unsafe {
-            let mut size = min_size;
             let mut sys_info = SYSTEM_INFO::default();
 
             GetSystemInfo(&mut sys_info);
 
-            if (size % sys_info.dwAllocationGranularity as usize) != 0 {
-                size += size % sys_info.dwAllocationGranularity as usize;
-            }
+            let aliment = sys_info.dwAllocationGranularity as usize;
+
+            let size = min_size + (min_size % aliment);
 
             let placeholder1 = VirtualAlloc2(
                 None,
@@ -144,7 +143,8 @@ impl<'a> CircularBuffer<'a> {
     pub fn write(self: &mut Self, buffer: &[u8]) -> usize {
         let size = self.size;
         let bytes_to_write = buffer.len().min(size);
-        self.write_slice().copy_from_slice(&buffer[..bytes_to_write]);
+        self.write_slice()
+            .copy_from_slice(&buffer[..bytes_to_write]);
         self.commit_write(bytes_to_write);
         bytes_to_write
     }
@@ -168,15 +168,14 @@ impl<'a> CircularBuffer<'a> {
         }
     }
 
-
     pub fn read_from_file(self: &mut Self, file: &mut std::fs::File) -> std::io::Result<usize> {
         let write_slice = self.write_slice();
         match std::io::Read::read(file, write_slice) {
             Ok(bytes) => {
                 self.commit_write(bytes);
                 Ok(bytes)
-            },
-            Err(e) => Err(e)
+            }
+            Err(e) => Err(e),
         }
     }
 }
